@@ -1,46 +1,52 @@
 import os
-from rembg import remove
+import gradio as gr
+import tempfile
+import rembg
 from PIL import Image
-from werkzeug.utils import secure_filename
-from flask import Flask,request,render_template
+import atexit
 
-UPLOAD_FOLDER = 'static/uploads'
-ALLOWED_EXTENSIONS = set(['png', 'jpg', 'jpeg','webp'])
+UPLOAD_FOLDER = 'input'
+OUTPUT_FOLDER = 'output'
 
-if 'static' not in os.listdir('.'):
-    os.mkdir('static')
+if not os.path.exists(UPLOAD_FOLDER):
+    os.makedirs(UPLOAD_FOLDER)
 
-if 'uploads' not in os.listdir('static/'):
-    os.mkdir('static/uploads')
+if not os.path.exists(OUTPUT_FOLDER):
+    os.makedirs(OUTPUT_FOLDER)
 
-app = Flask(__name__)
-app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 0
-app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
-app.secret_key = "secret key"
-
-def allowed_file(filename):
-    return '.' in filename and filename.rsplit('.', 1)[1] in ALLOWED_EXTENSIONS
-
-def remove_background(input_path,output_path):
+def remove_background(input_path, output_path):
     input = Image.open(input_path)
-    output = remove(input)
+    output = rembg.remove(input)
     output.save(output_path)
 
+def remove_background_gradio(input_image):
+    with tempfile.NamedTemporaryFile(delete=False, dir=UPLOAD_FOLDER, suffix=".webp") as temp_input_file:
+        input_path = temp_input_file.name
+        input_image.save(input_path)
+    with tempfile.NamedTemporaryFile(delete=False, dir=OUTPUT_FOLDER, suffix=".webp") as temp_output_file:
+        output_path = temp_output_file.name
+    remove_background(input_path, output_path)
+    return Image.open(output_path)
 
-@app.route('/')
-def home():
-    return render_template('home.html')
-
-@app.route('/remback',methods=['POST'])
-def remback():
-    file = request.files['file']
-    if file and allowed_file(file.filename):
-        filename = secure_filename(file.filename)
-        file.save(os.path.join(app.config['UPLOAD_FOLDER'], filename))
-        rembg_img_name = filename.split('.')[0]+"_rembg.png"
-        remove_background(UPLOAD_FOLDER+'/'+filename,UPLOAD_FOLDER+'/'+rembg_img_name)
-        return render_template('home.html',org_img_name=filename,rembg_img_name=rembg_img_name)
-
+def cleanup_folders():
+    for file in os.scandir(UPLOAD_FOLDER):
+        os.remove(file.path)
+    for file in os.scandir(OUTPUT_FOLDER):
+        os.remove(file.path)
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0',port=5000)
+    # 清理函数
+    atexit.register(cleanup_folders)  # 注册清理函数
+    
+    examples = [f"examples/{file.name}" for file in os.scandir('./examples')]
+    
+    iface = gr.Interface(
+        fn=remove_background_gradio,
+        inputs=gr.inputs.Image(type='pil', label='Input Image'),
+        outputs=gr.outputs.Image(type='pil', label='Output Image'),
+        live=True,
+        title='Background Remover',
+        description='Upload an image and remove the background using Rembg.',
+        examples=examples
+    )
+    iface.launch(share=False, server_name="0.0.0.0")
